@@ -1,0 +1,777 @@
+;+
+; :Description:
+;   <modified from EjM2_makeState>
+; :Params:
+;   state: 
+; :Keywords:
+;   iPLS:  plasma model index
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-02-20/2012/10/13
+;-
+PRO PXMD_makeState, state, iPLS = iPLS
+   COMPILE_OPT IDL2
+   
+   Fp  = id_homepath() +      $
+         'Documents/Work/MyIDL/Proximal/Rev288CA.sav'
+   Ff  = id_homepath() +      $
+         'Documents/Work/MyIDL/Proximal/FringOrbit_2017-009.sav'
+   TraGrid_p = PXMD_makeSCgrid(FILE = Fp, GridSize=5D-2)
+   TraGrid_f = PXMD_makeSCgrid(FILE = Ff, GridSize=5D-2)
+   ; Oct. 11 - add one item to save the Vd - Vsc vector info for CDA pointing analysis
+   ; grids in longitude, latitude, and relative speed
+;   gLONG = FINDGEN(13)*3E1
+;   gLAT  = [-9E1, FINDGEN(6)*3E1 - 7.5E1, 9E1]
+   gLONG = FINDGEN(37)*1E1
+   gLAT  = FINDGEN(19)*1E1-9E1
+   gVrel = [FINDGEN(10)*5E0,FINDGEN(6)*1E1+5E1,1E3]
+   nLONG = N_ELEMENTS(gLONG)
+   nLAT  = N_ELEMENTS(gLAT)
+   nVrel = N_ELEMENTS(gVrel)
+;   cda   = DBLARR(TraGrid.nz, nLONG, nLAT, nVrel)
+   gCDA  = {gLONG:gLONG, gLAT:gLAT, gVr:gVrel,                        $
+            nLONG:nLONG, nLAT:nLAT, nVr:nVrel}
+   ; Oct. 11 - END
+   
+   ;constant makeState
+   state = PTR_NEW({G:       6.6742D-11,                              $;m3/kg/sec2
+                    Ms:      1.989D30,                                $;kg
+                    Mp:      5.685D26,                                $;kg
+                    GMp:     0D0,                                     $;m3/sec2
+                    Rp:      6.0330D7,                                $;meter
+                    j2:      0.01667,                                 $
+                    Dsun:    9.52D0,                                  $;AU (to Sun)
+                    B0:      0.21535D-4,                              $;Tesla = C sec/m2
+                    z3:      PTR_NEW(),                               $;Saturn Z3 B field Model parameters
+                    OMG:     1.622D-4,                                $;rad/sec
+                    ec:      1.602D-19,                               $;e-
+                    me:      9.109D-31,                               $;kg
+                    mH:      1.674D-27,                               $;mass of proton
+                    mH2:     3.348D-27,                               $;mass of proton
+                    mO:      2.657D-26,                               $;mass of oxygen
+                    mO2:     5.314D-26,                               $;mass of O2
+                    pc:      8.854D-12,                               $;permittivity
+                    k:       8.988D9,                                 $
+                    Rring:   FLTARR(2),                               $; C to A ring range (Rp)
+                    Saturn:  PTR_NEW(),                               $; Saturn shape model
+                    ;time structure
+                    t :      0D0,                                     $
+                    dT:      0D0,                                     $;second
+                    dT0:     1D0,                                     $;second
+                    dt_min:  2.5D-1,                                  $;second
+                    t_up:    75.*8.64D4,                              $;upper limit in time (sec)
+                    Zgrid:   [0D0, 1D3, 1D9],                         $;meter
+                    dTgrid:  [1D-1, 1D0],                             $;multiple of dT0
+                    dTC:     0L,                                      $;dt count
+                    nRPX:    0L,                                      $;
+                    nT:      50000000L,                               $;num. of timesteps
+                    ;dust property
+;                    Lshell:  0D0,                                     $
+                    a_d:     1D3,                                     $;size - nm
+                    den_d:   1D3,                                     $;density - kg/m3
+                    m_d:     0D0,                                     $;mass - kg
+                    pa_d:    0D0,                                     $;projected area (!dpi*a_d^2)
+                    ne_d:    0L,                                      $;# of e- on dust
+                    ne_d0:   0L,                                      $;# of e- on dust initially
+                    phid:    0D0,                                     $;surface potential(V)
+                    dust:    DBLARR(6),                               $;[r,z,r',z']
+                    dphi:    0D0,                                     $;phi - 1/sec
+                    cnst_c0: 0D0,                                     $;charging constant 0
+                    cnst_c1: 0D0,                                     $;charging constant 1
+                    xy:      0D0,                                     $;sqrt(x^2+y^2) in Rs
+                    r:       0D0,                                     $;particle distance in Rs
+                    lat:     0D0,                                     $;particle latitude in radian
+                    alt:     0D0,                                     $;particle altitude in Rs
+                    L:       0D0,                                     $;particle L shell
+                    Natm:    0D0,                                     $;local atmosphere density in m^-3
+                    Vth:     1.82D3,                                  $;400K, sqrt(2.*400./1.16d4/2./1.67d-27*1.6d-19)
+                    nVcor:   DBLARR(3),                               $;local plasma velocity unit vector
+                    Vcor:    DBLARR(3),                               $;local plasma velocity in m/s
+                    dVcor:   DBLARR(3),                               $;velocity diff. btw co-rotation in m/s
+                    dVcorV:  0D0,                                     $;speed diff. btw co-rotation in m/s
+                    Vkpr0:   0D0,                                     $;Kepler speed at 1Rs in m/s
+                    Vkpr:    DBLARR(3),                               $;Kepler velocity in m/s
+                    tau_S:   0.515,                                   $;for calc. impact prob. [Cuzzi 98 p13]
+                    p_coll:  1.0335,                                  $;for calc. impact prob. [Cuzzi 98 p13]
+;                    dphiR:   1D0,                                     $;ratio to dphi (0 - 1)
+                    r0:      1.05D0,                                  $;r @ t=0 in Rp
+                    z0:      0D0,                                     $;z @ t=0 in Rp
+                    vkp:     0D0,                                     $;Keplerian speed
+                    vcir:    0D0,                                     $;Speed that maintains circular motion
+                    q2m:     0D0,                                     $;C/kg
+                    dv_drag: 0D0,                                     $;speed change due to drag force
+                    dydx:    0D0,                                     $;to evaluate dt
+                    leave:   3.,                                      $;stop calculation outside 3Rp
+                    ; plasma & charging
+                    lambda_up:0.1,                                    $;upper limit of lambda (rate)
+;                    lambda_mx:0D0,                                    $;record the max. lambda
+                    k_uv:    0D0,                                     $; Fuv, m-2 sec-1
+                    kappa:   1D-1,                                    $;UV current parameter
+                    T_p:     2D0,                                     $;T_photo e-
+                    plasma0: PTR_NEW(),                               $;plasma setup
+                    T_e:     0D0,                                     $;plasma temperature in eV
+                    N_e:     0D0,                                     $;plasma density in m^-3
+                    enhance: [1.239,1D1],                             $;e- density enhancement [outer L shell, factor]
+                    ring:    PTR_NEW(),                               $;Ring potential / optical depth profiles
+                    beta:    2.6D1,                                   $;Ring-Sun open angle (0-26 degree)
+                    Usun:    FLTARR(3),                               $;unit vector points from Saturn to Sun
+                    tanB:    0D0,                                     $;TAN(beta)
+                    cotB:    0D0,                                     $;1/TAN(beta)
+                    cosNB:   0D0,                                     $;cos(-beta)
+                    sinNB:   0D0,                                     $;sin(-beta)
+                    survive: 1D0,                                     $;survive probabilty
+                    shadow:  0,                                       $;shadow, 1 when in shadow of A/B rings
+                    gCDA:    PTR_NEW(gCDA,/NO_COPY),                  $;pointing grid
+                    ; for proximal orbit
+                    gTraj_p :PTR_NEW(TraGrid_p,/NO_COPY),             $;proximal orbit SC trajectory grid
+                    src_p:   PTR_NEW(),                               $;dust source along the trajectory
+                    cda_p:   PTR_NEW(),                               $;Vd-Vsc bin
+                    ; for F ring orbit
+                    gTraj_f :PTR_NEW(TraGrid_f,/NO_COPY),             $;F ring   orbit SC trajectory grid
+                    src_f:   PTR_NEW(),                               $;dust source along the trajectory
+                    cda_f:   PTR_NEW(),                               $;Vd-Vsc bin
+                    ;system & initial values
+                    path:    '',                                      $; project path
+                    pathS:   '',                                      $; saving path
+                    pathT:   '',                                      $; trajectory file path
+                    pathL:   '',                                      $; log file path
+;                    seed:    SYSTIME(1),                              $; 
+                    mode:    ''                                       $; operation mode
+                    }, /NO_COPY)
+   
+   (*state).path = id_homepath() + 'Documents/Work/MyIDL/Proximal/'
+   (*state).pathS= (*state).path + '2012_DEC/';'2012_shadow/';'Save/'
+   
+;   (*state).Rring = [72321.6,143136.5]*1E3/(*state).rp ;[74658.,136775.]
+   (*state).Rring = [66363.0,143136.5]*1E3/(*state).rp
+   (*state).saturn= PTR_NEW(PXM_getSaturnShape(), /NO_COPY)
+   beta_rad       = (*state).beta/!RADEG
+   (*state).tanB  = TAN(beta_rad)
+   (*state).cotB  = 1D0/(*state).tanB
+   (*state).cosNB = COS(-beta_rad)
+   (*state).sinNB = SIN(-beta_rad)
+   (*state).Usun  = [COS(beta_rad),0.,SIN(beta_rad)]
+   
+   ; grain size in meter
+   (*state).a_d *= 2D-8   
+   (*state).pa_d = !DPI*(*state).a_d^2
+   (*state).m_d  = 4D0/3D0*!DPI*(*state).den_d * (*state).a_d^3
+   (*state).ne_d = (*state).ne_d0
+   PXMD_updateDustCharge, state
+   
+   ; charging
+   (*state).k_uv   = 2.5D14/ (*state).Dsun^2 * (*state).kappa
+   plasma0 = PXMD_getPlasmaSetup(iPLS)
+   (*state).plasma0 = PTR_NEW(plasma0, /NO_COPY)
+;   phi_rp          = PXMD_calcRingPotential(state, beta=(*state).beta)
+;   (*state).ring   = PTR_NEW(phi_rp, /NO_COPY)
+   (*state).ring   = PTR_NEW(PXMD_getRingOpticalDepth(state),/NO_COPY)
+   
+   (*state).dT  = (*state).dT0
+   (*state).GMp = (*state).G * (*state).Mp
+   (*state).vkp = SQRT((*state).GMp/(*state).r0/(*state).rp)
+   (*state).dust= [ (*state).r0,          0D0, 0D0,                   $
+                            0D0, (*state).vkp, 0D0]
+   (*state).dust[0:2] *= (*state).rp
+   (*state).Vkpr0 = (*state).vkp
+   (*state).Vkpr  = [0D0, (*state).Vkpr0, 0D0]
+   
+   (*state).z3 = PTR_NEW( PXMD_getBFg(MODEL='Cassini Zonal'), /NO_COPY)
+   
+END
+
+;+
+; :Description:
+;    update dust potential & Q/M ratio
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-03-05
+;-
+PRO PXMD_updateDustCharge, state
+   COMPILE_OPT IDL2
+   
+   (*state).q2m  = -(*state).ec * (*state).ne_d / (*state).m_d
+   (*state).phid = (*state).den_d* (*state).a_d^2* (*state).q2m /     $
+                   (*state).pc/ 3D0
+END
+
+;+
+; :Description:
+;   check if the dust is in the shadow of Saturn / main rings
+; :Parameters:
+;   pos: [X,Y,Z] in KPS system, unit: Rs
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2018-01-09
+;-
+PRO PXMD_checkShadow, pos
+   COMPILE_OPT IDL2
+   COMMON working, state
+   
+   ; planet shadow
+   IF ABS(pos[1]) LE 1. AND pos[0] LT 0. THEN BEGIN
+;      x2 = pos[0]*(*state).cosNB- pos[2]*(*state).sinNB
+      z2 = pos[0]*(*state).sinNB+ pos[2]*(*state).cosNB
+      IF ABS(z2) LE 1. THEN BEGIN (*state).shadow = 999
+      ENDIF ELSE (*state).shadow = 0
+   ENDIF ELSE (*state).shadow = 0
+   
+   ; ring shadow
+   IF (*state).shadow EQ 0 AND pos[2]*(*state).beta LT 0 THEN BEGIN
+      rGrid = [0.,1.534,1.951,2.035,2.280,1E3]
+      
+;      pos   = (*state).dust[0:2]/(*state).rp
+      
+      dx       = (*state).cotB*pos[2]
+      xy_shift = SQRT((pos[0]-dx)^2+pos[1]^2)
+      
+      idx      = VALUE_LOCATE(rGrid, xy_shift)
+      
+      IF idx EQ 1 THEN BEGIN
+         ; B ring
+         (*state).shadow = idx
+      ENDIF ELSE IF idx EQ 3 THEN BEGIN
+         ; A ring
+         (*state).shadow = idx
+      ENDIF ELSE (*state).shadow = 0
+   ENDIF
+END
+
+;+
+; :Description:
+;    Calculate the density of Saturn's atmosphere as a function of 
+;    scale height
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2017-11-16
+;-
+PRO PXMD_getNatm, state
+   COMPILE_OPT IDL2
+   
+;   natm = 1e12*exp(-(alt-1d3)/1e2) ;alt in km, den in cm^-3
+   
+;   (*state).Natm = 1D18*EXP(-((*state).alt-1.66D-2)/1.66d-3)
+   
+   IF (*state).alt GT 2.15D-2 THEN BEGIN
+      ; above 1300 km alt
+      (*state).Natm = 1.88D16*EXP(-((*state).alt-2.15D-2)/3.31d-3)
+   ENDIF ELSE (*state).Natm = 1D18*EXP(-((*state).alt-1.49D-2)/1.66d-3)
+   
+END
+
+;+
+; :Description:
+;    update (*state).xy
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-03-19
+;-
+PRO PXMD_updateDustXY, state
+   COMPILE_OPT IDL2
+   
+   dust           = (*state).dust
+   pos            = dust[0:2]/(*state).rp
+   (*state).xy    = SQRT(pos[0]^2+pos[1]^2)
+   (*state).r     = SQRT((*state).xy^2+pos[2]^2)
+   
+   lat            = PXM_getLat(pos[2], (*state).xy)
+   alt            = PXM_getAlt((*state).r, lat, *(*state).saturn)
+   (*state).alt   = alt
+   (*state).lat   = lat
+;   out            = PXM_getAltLat(pos, *(*state).saturn)
+;   (*state).alt   = out.alt
+;   (*state).lat   = out.lat
+   
+   (*state).L     = (*state).xy/COS((*state).lat)^3
+   
+   ; 2017/08/25 calculate the speed diff. btw dust and co-rotating plasma
+   vcor           = (*state).xy*(*state).rp*(*state).r*(*state).OMG ;m/s
+   Npole          = [0.,0.,1D0]
+   uv             = normalize(crossprod(Npole,[dust[0],dust[1],0D0]))
+   Vcor           = uv*vcor
+   dVcor          = Vcor-dust[3:5]
+   (*state).nVcor = uv
+   (*state).Vcor  = Vcor
+   (*state).dVcor = dVcor
+   (*state).dVcorV= SQRT(TOTAL(dVcor^2))
+   
+;   absVkpr        = (*state).Vkpr0/SQRT((*state).r)
+;   (*state).Vkpr  = uv*absVkpr
+   
+   ; get atmosphere density
+   PXMD_getNatm, state
+   
+   ; check shadow
+   PXMD_checkShadow, pos
+END
+
+;+
+; :Description:
+;    get the electron parameters
+;    <modified from PXMD_getElectron>
+; :Parameters:
+;   state
+; :Keywords: 
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2017-09-25
+;-
+PRO PXMD_getPlasma, state
+   COMPILE_OPT IDL2
+   
+   pl = (*(*state).plasma0)
+   
+   ; ionosphere
+   Ne0_i  = pl.ne0
+   Te_low = pl.Te_low
+   Te_high= pl.Te_high
+   H_i    = pl.H
+   
+   alt    = (*state).alt
+   L      = (*state).L
+   lat    = (*state).lat
+   
+   ; density
+   den_iono = ne0_i*EXP(-(alt/H_i))*L^(-3.) < ne0_i
+   
+   ; ring ionosphere (electron only)
+   IF pl.iRing THEN BEGIN
+;      Ne0_r    = pl.ne0_ring
+;      H_r      = pl.H_ring
+;;      xy       = (*state).xy
+;;      z        = (*state).dust[2]/(*state).rp
+;      
+;      IF L GT 1.534 AND L LT 2.280 THEN BEGIN
+;         ; within A & B rings
+;         IF lat LT 0. THEN BEGIN
+;            fct  = EXP(-((2.280-L)/0.02)^0.8) > 1D-2
+;            Ne0_r *= fct
+;         ENDIF
+;         ; A ring
+;         IF L GT 2.035 THEN Ne0_r *= 0.2
+;      ENDIF ELSE BEGIN
+;         ; outside A & B rings
+;         IF L LE 1.534 THEN BEGIN
+;            fct = (lat LT 0.)? 1D-2 : EXP(-((1.534-L)/0.02)^0.8)
+;            Ne0_r *= fct
+;         ENDIF ELSE BEGIN
+;            Ne0_r *= EXP(-((L-2.280)/0.02)^0.8)*0.1
+;         ENDELSE
+;      ENDELSE
+;      
+;      ; for pls 4
+;      den_ring = Ne0_r*EXP(-(ABS(lat)/H_r)^0.7)
+;      ; for pls 0-3
+;;      den_ring = Ne0_r*EXP(-(ABS(lat)/H_r)^3)
+      
+      ; ring model 2
+      rGrid     = [1.080,1.239,1.534,1.625,1.951,2.035,2.280]
+      ridx      = VALUE_LOCATE(rGrid, L)
+      CASE ridx OF
+         -1:BEGIN;within D ring
+            Ne0_r  = 0D0         ;cm^-3
+            H_r    = 10./!RADEG
+         END
+         0:BEGIN ;D ring
+            Ne0_r  = 2D0         ;cm^-3
+            H_r    = 5./!RADEG
+            IF lat LE 0. THEN Ne0_r /= 5.
+         END
+         1:BEGIN ;C ring
+            Ne0_r  = 5D0         ;cm^-3
+            H_r    = 5./!RADEG
+            IF lat LE 0. THEN Ne0_r /= 5.
+         END
+         2:BEGIN ;B ring - inside the siphon flow radius
+            Ne0_r  = 7D0         ;cm^-3
+            H_r    = 5./!RADEG
+            IF lat LE 0. THEN Ne0_r /= 50.
+         END
+         3:BEGIN ;B ring - outside the siphon flow radius
+            Ne0_r  = 7D0         ;cm^-3
+            H_r    = 1./!RADEG
+            IF lat LE 0. THEN Ne0_r /= 50.
+         END
+         4:BEGIN ;Cassini division
+            Ne0_r  = 5D0         ;cm^-3
+            H_r    = 4./!RADEG
+         END
+         5:BEGIN ;A ring
+            Ne0_r  = 3D0         ;cm^-3
+            H_r    = 2./!RADEG
+            IF lat LE 0. THEN Ne0_r /= 50.
+         END
+         6:BEGIN ;outside A ring
+            Ne0_r  = 3D0         ;cm^-3
+            H_r    = 6./!RADEG
+         END
+      ENDCASE
+      den_ring = Ne0_r*EXP(-(ABS(lat)/H_r)^0.7)
+;      den_ring*= 1D1
+      (*state).N_e = (den_iono+den_ring)*1D6   ;m^-3
+   ENDIF ELSE (*state).N_e = den_iono*1D6   ;m^-3
+   
+   IF (*state).shadow GT 0 THEN (*state).N_e = (*state).N_e/1D1 < 2D6
+;   IF lat LT 0. THEN (*state).N_e = (*state).N_e/1D1 < 2D6
+   
+   ; temperature
+   (*state).T_e = (alt GT 0.25)? Te_high :                            $
+                                 Te_high/EXP(((0.25-alt)/H_i)^0.8)    $
+                   > Te_low ;eV
+   
+END
+
+;+
+; :Description:
+;    update dT, which depends on the |Z| above/below the ring
+;    [to account for the E field/charging in the ring sheath]
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-03-19
+;-
+PRO PXMD_getDT, state
+   COMPILE_OPT IDL2
+   (*state).dT = 1D0
+END
+
+;+
+; :Description:
+;   return "judge" for the following cases:
+;   0: alive
+;   1: hit the main ring (A - C ring, see (*state).Rring)
+;   2: hit Saturn
+;   3: eascap to the E ring
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-02-20
+;-
+FUNCTION PXMD_terminate, dust0_ori, dust1_ori
+   COMPILE_OPT IDL2
+   COMMON working, state
+   COMMON SC3, seed
+   
+   IF (*state).t GT (*state).t_up THEN BEGIN
+      PRINT, 'Survive longer than 15 days'
+      RETURN, 4
+   ENDIF
+   
+   dust0 = dust0_ori/(*state).rp
+   dust1 = dust1_ori/(*state).rp
+   
+   d2p = SQRT(TOTAL(dust1[0:2]^2))
+   
+   ; end of the simulation scenario
+   IF d2p GE (*state).Rring[0] AND d2p LE (*state).Rring[1] AND       $
+      dust1[2]*dust0[2] LE 0. THEN BEGIN
+;      ABS(dust1[2]) LT 1D-2 THEN BEGIN
+      xy  = SQRT(dust0[0]^2+dust0[1]^2)
+      idx = VALUE_LOCATE((*(*state).ring).r, xy)
+      tau = (*(*state).ring).tau[idx]
+      tau_s= (*state).tau_s
+      p    = (*state).p_coll
+      prob = (1D0-EXP(-(tau/tau_S)^p))^(1D0/p)
+      
+      rnd = RANDOMU(seed)
+      IF rnd GT prob THEN BEGIN
+         ; survive RPX
+         (*state).nRPX ++
+         PRINT, 'RPX-'+STRING((*state).nRPX,FORMAT='(I7)')+' @ '+     $
+                STRING((*state).r,FORMAT='(F5.2)')+ ' Rs'
+         RETURN, 0
+      ENDIF ELSE BEGIN
+         ; collide with the ring
+         PRINT, 'Hit the main ring'
+         RETURN, 1
+      ENDELSE
+      
+;   ENDIF ELSE IF d2p LE 1.01 AND (*state).dv_drag GE 5D3 THEN BEGIN
+   ENDIF ELSE IF (*state).dVcorV LE (*state).Vth AND                  $
+                 (*state).alt    LT 0.025 THEN BEGIN
+      PRINT, 'Fall into Saturn - drag'
+      print, (*state).dVcorV
+      RETURN, 2
+   ENDIF ELSE IF d2p LT 1. THEN BEGIN
+      r     = SQRT(TOTAL(dust1[0:1]^2))
+      b     = 60268. / 54364.
+      Y_sat2= (1.0-r^2)/b^2
+      IF dust1[2]^2 LE Y_sat2 THEN BEGIN
+         PRINT, 'Fall into Saturn'
+         RETURN, 2
+      ENDIF
+   ENDIF ELSE IF d2p GT (*state).leave THEN BEGIN
+      PRINT, 'Transported outward'
+      RETURN, 3
+   ENDIF ELSE RETURN, 0
+END
+
+FUNCTION DC_calcIonCurrentR, J0, chi, Mo
+   ; calculate the ion current when potential is positive
+   IF ABS(Mo) GE 0.1 THEN BEGIN
+      ; the non-isotropic ion current (dV > 0)
+      J = 2.5D-1 * J0 * ( (Mo^2+0.5-chi) * (SQRT(!DPi)/Mo) *          $
+         ( ERF(Mo+SQRT(chi)) + ERF(Mo-SQRT(chi)) )         +          $ 
+         (SQRT(chi)/Mo+1.D0) * EXP(-(Mo-SQRT(chi))^2)     -          $
+         (SQRT(chi)/Mo-1.D0) * EXP(-(Mo+SQRT(chi))^2.))
+   ENDIF ELSE BEGIN
+      ; the isotropic ion current (dV = 0)
+      J = J0 * EXP(-chi)
+   ENDELSE
+   
+   RETURN, J
+END
+
+
+FUNCTION DC_calcIonCurrentA, J0, chi, Mo
+   ; calculate the ion current when potential is negative
+   IF ABS(Mo) GE 0.1 THEN BEGIN
+      ; the non-isotropic ion current (dV > 0)
+      J = 5.D-1 * J0* ( (Mo^2+5.D-1-chi) * (SQRT(!DPi)/Mo) * ERF(Mo) $
+                         + EXP(-Mo^2) )
+   ENDIF ELSE BEGIN
+      ; the isotropic ion current (dV = 0)
+      J = J0 * (1.D0 - chi)
+   ENDELSE
+   
+   RETURN, J
+END
+
+;+
+; :Description:
+;    Calculate the electron & photoemission + H+ ion currents
+;    <modified from PXMD_calc3Currents>
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2017-09-25
+;-
+FUNCTION PXMD_calcCurrents_v2, state
+   COMPILE_OPT IDL2
+   
+   ; physical property
+   me  = (*state).me
+   mH  = (*state).mH
+   eV  = (*state).ec
+   
+   ; dust property
+   a_d   = (*state).a_d
+   volt  = (*state).phid
+   area  = !DPI*a_d^2
+   const0= 4D0*area
+   
+   ; get plasma property
+   T_e    = (*state).T_e
+   T_p    = (*state).T_p
+   N_e    = (*state).N_e
+   
+   chi_e  = -volt/T_e
+   chi_p  =  volt/T_p
+   chi_H  =  volt/T_e
+   
+   J0e = const0*N_e*SQRT(T_e*eV/2D0/!DPI/me)
+   J0p = ((*state).shadow GT 0)? 0D0 : area* (*state).k_uv
+   J0H = J0e*SQRT(me/mH) ;assuming n_e = n_H+
+   MoH = (*state).dVcorV/SQRT((2D0*T_e*eV)/mH)
+   
+   IF volt GT 0D0 THEN BEGIN
+      ; electron from the ring
+      J_e = J0e*(1.D0-chi_e)
+      ;photoelectron current
+      J_p = J0p * EXP(-chi_p)
+      ;ion current
+      J_H = DC_calcIonCurrentR(J0H, chi_H, MoH)
+   ENDIF ELSE IF volt LE 0D0 THEN BEGIN
+      ; electron from the ring
+      J_e = J0e * EXP(-chi_e)
+      ; photoelectron current
+      J_p = J0p
+      ;ion current
+      J_H = DC_calcIonCurrentA(J0H, chi_H, MoH)
+   ENDIF
+   
+   RETURN, [J_e, J_p, J_H]
+END
+
+;+
+; :Description:
+;    The equation of motion: Lorentz force (dipole field) + gravity
+;    <modified from EjM2_EqMotion>
+; :Keywords:
+;   t:    time
+;   dust: state vector
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-02-20
+;-
+FUNCTION PXMD_EqMotion, t, dust
+   COMPILE_OPT IDL2
+   
+   COMMON working, state
+   B0  = (*state).B0
+   GMp = (*state).GMp
+   rp  = (*state).Rp
+   j2  = (*state).j2
+   OMG = (*state).OMG
+   q2m = (*state).q2m
+   
+   PXMD_updateDustXY, state
+   
+   ; === Cartesian coordinate system ===
+   Rpd  = SQRT(TOTAL(dust[0:2]^2))
+   Rpd3 = Rpd^3
+   B = PXMD_getZ3Bfield(dust[0:2])
+   Bx = B[0]
+   By = B[1]
+   Bz = B[2]
+   ;==Lorentz force==
+   aL = Q2M*[(dust[4]*BZ-dust[5]*BY)-(OMG*dust[0]*BZ),                $
+             (dust[5]*BX-dust[3]*BZ)-(OMG*dust[1]*BZ),                $
+             (dust[3]*BY-dust[4]*BX)+OMG*(dust[1]*BY+dust[0]*BX) ]
+   
+   ;==Gravity-Saturn==
+   aG = -dust[0:2]*(GMp/Rpd3)
+;   ;==J2==
+   SINDEL = dust[2]/Rpd
+   Fj2    = 1.5D0*J2*(rp/Rpd)^2
+   D1     = 1D0 - 5D0*SINDEL^2
+   D2     = 3D0 - 5D0*SINDEL^2
+   Aj2    = Fj2*[D1,D1,D2]
+   aG     = aG*(1D0 + Aj2)
+   
+   ; Drag force
+   ; plasma drag (H+)
+   Ndrag = (*state).N_e
+   VHion = SQRT(2D0*(*state).T_e*(*state).ec/(*state).mH)
+   aDG0p = 1.333*(*state).pa_d*VHion*(*state).mH*Ndrag*               $
+           (*state).dVcorV/(*state).m_d
+   IF (*state).alt LE 0.15 THEN BEGIN
+      ; neutral drag (H2)
+      Ndrag= (*state).Natm
+      aDG0n= 1.333*(*state).pa_d*(*state).Vth*(*state).mH2*Ndrag*     $
+             (*state).dVcorV/(*state).m_d
+      aDG0 = aDG0n+aDG0p
+   ENDIF ELSE aDG0 = aDG0p
+   (*state).dv_drag = ABS(aDG0)
+   uvr = normalize((*state).dVcor)
+   aDG = aDG0*uvr
+   
+   RETURN, [dust[3:5],aG+aL+aDG]
+END
+
+;+
+; :Description:
+;   <modified from EjM2>
+; :Keywords:
+;   EXP: export
+; :Author:
+;   Sean Hsu
+; :Date:
+;   2012-02-20
+;-
+PRO PXM_Dynamics, EXP = EXP
+   ;;Integration:
+   ;;   Using adaptive time step Runge-Kutta method
+   ;;Frame:
+   ;;   Saturn centered cylindrical coordinates (r, phi, z)
+   ;;B-field:
+   ;;    dipole-field
+   COMPILE_OPT IDL2
+   COMMON working, state
+   COMMON SC3, seed
+   
+   t_start = systime(1)
+   
+   IF NOT N_ELEMENTS(EXP) THEN EXP = 0
+   
+   PXMD_makeState, state, iPLS = 1403
+   
+   ss               = DBLARR(8, (*state).nT+1L)
+   shadow           = INTARR((*state).nT+1L)
+   dv_drag          = DBLARR((*state).nT+1L)
+   alt              = DBLARR((*state).nT+1L)
+   vz0              = 1D2 ; initial Z velocity
+   (*state).dust[5] = vz0
+   (*state).dust[2] = 1D-1*vz0/ABS(vz0)
+   dust0            = (*state).dust
+   ss[0:5,0]        = dust0[0:5]
+   ss[6,0]          = (*state).phid
+   ss[7,0]          = 0D0
+   PXMD_updateDustCharge, state
+   PXMD_updateDustXY, state
+   PXMD_getPlasma, state
+   PXMD_getDT, state
+   (*state).t       = 0D0
+   (*state).dtc     = 0L
+   alt[0]           = (*state).alt
+   dv_drag[0]       = (*state).dv_drag
+   shadow[0]        = (*state).shadow
+   i                = 0L
+   judge            = 0
+   seed             = SYSTIME(1);1D2;
+   
+   ; Integration
+   WHILE judge EQ 0 DO BEGIN
+      PXMD_updateDustXY, state
+      PXMD_getPlasma, state
+;      PXMD_getPlasma_tmp, state
+      dydx = PXMD_eqMotion((*state).t, dust0)
+      (*state).dydx = SQRT(TOTAL(dydx[3:5]^2))
+      PXMD_getDT, state
+      dust1 = DBLARR(6)
+      dust1 = RK4(dust0 ,dydx, (*state).t, (*state).dt,               $
+                  'PXMD_eqMotion', /DOUBLE )
+      (*state).t += (*state).dT
+      
+      ss[0:5,i+1L] = dust1[0:5]
+      ss[6,  i+1L] = (*state).phid
+      ss[7,  i+1L] = (*state).t
+      dv_drag[i+1] = (*state).dv_drag
+      shadow[i+1]  = (*state).shadow
+      alt[i+1]     = (*state).alt
+      
+      ; end of the simulation scenario
+      judge = PXMD_terminate(dust0, dust1)
+      CASE judge OF
+         0:BEGIN; keep alive
+            i++
+            dust0         = dust1
+            (*state).dust = dust0
+            PXMD_updateDustXY, state
+            ; stochastic charging
+            count = PXMD_getChargingEvent_v2(state)
+            dJ    = 0L
+            IF TOTAL(count) GT 0L THEN BEGIN
+               ; sum up all the events
+               ; [J_e, J_p, J_H]
+               dJ             = count[0] - TOTAL(count[1:2])
+               (*state).ne_d += dJ
+               PXMD_updateDustCharge, state
+               ;IF dJ NE 0 THEN print, i, (*state).ne_d, (*state).q2m
+            ENDIF
+         END
+         ELSE:BEGIN
+            (*state).dtc = i
+            ss           = ss[0:7,0L:i]
+            dv_drag      = dv_drag[0L:i]
+            shadow       = shadow[0L:i]
+            alt          = alt[0L:i]
+         END
+      ENDCASE
+      
+   ENDWHILE
+   
+   ss[0:2,*]/= (*state).rp ; Position in Rp
+   ss[3:5,*]/= 1D3         ; Velocity in km/s
+   
+   t_calc = SYSTIME(1)-t_start
+   PRINT, 'Calculation time: '+STRING(t_calc,FORMAT='(E8.2)')+' sec'
+   print,(*state).alt*(*state).rp/1D3
+END
